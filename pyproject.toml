@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tt-qwen38"
+version = "0.1.0"
+description = "Qwen3.8-Flash-Next on one Tenstorrent Blackhole p100a plus the host CPU, with an OpenAI- and Anthropic-compatible server"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+# ttnn (tt-metal 58648d4) and torch come from the tt-metal environment; ttnn is not on PyPI.
+# The native CPU-expert library is a separate package in native/ (pip install ./native; needs git, cmake, g++).
+dependencies = ["jinja2", "huggingface_hub", "regex", "pyyaml", "numpy", "tt-qwen38-native"]
+
+[project.scripts]
+tt-qwen38-server = "tt_qwen38.server:main"
+
+[tool.setuptools.packages.find]
+include = ["tt_qwen38*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.cpp", "*.hpp", "*.txt", "*.prof", "LICENSE"]

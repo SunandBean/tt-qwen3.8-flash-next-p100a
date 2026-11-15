@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+*.tensorbin
+*.gguf
+*.npy
+.venv/
+native/build/
+native/tt_qwen38_native/lib/

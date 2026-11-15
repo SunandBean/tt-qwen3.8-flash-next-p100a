@@ -1,0 +1,62 @@
+tt-qwen3.8-flash-next-p100a
+Copyright 2026 Sunbin Kim
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE). It runs Qwen3.8-Flash-Next on one
+Tenstorrent Blackhole p100a card plus the host CPU. It combines original code with code and formulas derived from the
+third-party projects listed below.
+
+----------------------------------------------------------------------------------------------------------------------
+Model weights: NOT included, NOT covered by the Apache License
+----------------------------------------------------------------------------------------------------------------------
+
+This repository contains no model weights and no files derived from them. At first start the server downloads, from
+their publishers and at pinned revisions (tt_qwen38/sources.py), and builds the card caches on your machine:
+
+* ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF (revision 5348543e) and ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF
+  (revision ed59f920): GSQ-RCO quantizations of Qwen3.8-Flash-Next by ISTA-DASLab (the Coder keeps 256 of the 512
+  routed experts).
+* Lottolabs/Qwen3.8-Flash-Next-Coder-P150 (revision 69e738b2): Lottolabs' GPTQ-BFP4 expert pool of the Coder.
+* Qwen/Qwen3.8-Flash-Next (revision de4b8e4d): the 31 tensors of its MTP draft layer only, read by byte range.
+
+All of them are under the Qwen Community License 1.0, Copyright (c) 2026 Qwen (third_party_licenses/
+Qwen-Community-License-1.0.txt). In short, read the full text before you rely on it, this is not legal advice:
+  1. Keep the copyright and permission notice. A commercial product or service with more than 100,000,000 monthly
+     active users or US$ 20,000,000 monthly revenue must display the model name prominently in its user interface.
+  2. If you or an affiliate run a "Model as a Service" business (giving third parties access to model inference or
+     fine-tuning, e.g. through an API or hosted endpoint such as this server, with meaningful control over inputs or
+     parameters) or an "AI Work Assistant" business (an independent AI product primarily for AI-assisted coding or
+     office productivity), you need a separate license from Qwen before any commercial use. Internal use that does
+     not make the software, its outputs or its capabilities available to any third party is exempt.
+
+----------------------------------------------------------------------------------------------------------------------
+Code
+----------------------------------------------------------------------------------------------------------------------
+
+* sjettTT/tt-qwen-3.8-flash-next (Apache License 2.0), commit 79472f41. A ttnn port of Qwen3.8-Flash-Next. Its CPU
+  oracle is the specification of the float32 reference in tt_qwen38/ref/model.py, and its ttnn op sequences and
+  numerics notes were the recipe for the single-card device code in tt_qwen38/.
+
+* Strata (MIT License), Copyright (c) 2026 Niko1221 and the Strata contributors (commit dbb2d168c).
+  - tt_qwen38/ref/third_party/strata_gguf_reader.py and strata_tokenizer.py: copied, MIT header kept.
+  - tt_qwen38/third_party/strata_mtp/: tools/mtp_fetch.py, tools/mtp_pack.py and strata_control/tls.py (import
+    paths changed), which fetch and pack the MTP draft layer exactly as Strata's setup does.
+  - tt_qwen38/data/expert-profile-coder.prof and expert-profile.prof (Strata's .bin files, renamed): Strata's expert-placement profiles (which experts
+    are resident on the accelerator).
+  The design of hot experts on an accelerator and cold experts on the CPU follows Strata's CUDA engine.
+  MIT License text: third_party_licenses/Strata-MIT.txt.
+
+* llama.cpp / ggml (MIT License), Copyright (c) 2023-2026 The ggml authors, commit aa75ff32.
+  - tt_qwen38/third_party/gguf_py/gguf: llama.cpp's gguf-py (GGUF reading and writing, incl. type Q2_0).
+  - native/: libhostexp.so calls ggml's CPU dot-product kernels; native/build.sh fetches and builds ggml at that
+    commit (the built libraries ship in the container image and in a built tt-qwen38-native wheel).
+  MIT License text: third_party_licenses/llama.cpp-ggml-MIT.txt.
+
+* GCC's libgomp (GPL-3.0 with the GCC Runtime Library Exception) is copied next to libhostexp.so by native/build.sh
+  so the library runs without a system OpenMP runtime; the Runtime Library Exception permits this.
+
+* tt-metal / ttnn (Apache License 2.0), Copyright Tenstorrent AI ULC, commit
+  58648d44443223041148125843ca7c7d4780463e (tag v0.80.0-dev20260921). This project is a client of ttnn; the container
+  image contains a build of tt-metal at that commit, its models/common directory, and
+  models/experimental/gated_attention_gated_deltanet, whose delta-rule ops tt_qwen38/model.py imports (tt-metal's LICENSE).
+
+* Lottolabs and ISTA-DASLab: credit for the quantized weights above (not redistributed).

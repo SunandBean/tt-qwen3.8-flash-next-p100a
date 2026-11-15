@@ -1,0 +1,128 @@
+schema: "5.1"
+repo: sunandbean/qwen3.8-flash-next-p100a
+name: qwen3.8-flash-next-p100a
+# The manifest names ONE weights repo: the default `coder` profile's GGUF (58.4 GB, both shards, pinned).
+# The server fetches the rest itself on first start, pinned and sha256-checked (tt_qwen38/sources.py): the Lottolabs
+# GPTQ-BFP4 expert pool (32 GB, coder profiles), the MTP layer's tensors from Qwen/Qwen3.8-Flash-Next (5.2 GB read,
+# packed to 0.9 GB), and for the `full` profile the base model's GGUF (75.8 GB). Nothing is redistributed.
+weights:
+  repo: ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF
+  revision: 5348543e0147355ac9cbcb031184a3546350988e
+  allow_patterns:
+    - "IQ1_M/Qwen3.8-Flash-Next-GSQ-RCO-IQ1_M-0000*-of-00002.gguf"
+kind: http-server
+arch: blackhole
+
+image:
+  registry: hf
+
+source:
+  # 58648d4 = tag v0.80.0-dev20260921, the tt-metal every measurement on the model card was taken on
+  tt_metal: {repo: https://github.com/tenstorrent/tt-metal, ref: 58648d44443223041148125843ca7c7d4780463e}
+  code:
+    # models/common: what the other p100a ports ship (not imported). The gated-delta-net ops of tt-metal's
+    # experimental Qwen3.x port ARE imported (tt_qwen38/model.py: the delta-rule chunk ops).
+    - models/common
+    - models/experimental/gated_attention_gated_deltanet
+  extra_code:
+    - root: {repo: https://github.com/SunandBean/tt-qwen3.8-flash-next-p100a, ref: v0.1.0}
+      paths: [tt_qwen38, native]
+  ubuntu: "22.04"
+  python: "3.12"
+
+runtime:
+  command: [python, -m, tt_qwen38.server, --host, "{host}", --port, "{port}"]
+  ready_line: '"event": "ready"'
+  packages:
+    - jinja2
+    - huggingface_hub
+    - regex                 # the tokenizer's pre-tokenizer
+    - pyyaml                # the vendored gguf-py
+    # the host CPU-expert library (ggml at llama.cpp aa75ff32 + native/hostexp.cpp), compiled in the image build:
+    # x86-64-v4 (AVX-512) and x86-64-v3 (AVX2) variants, picked at run time from the CPU flags
+    - /opt/tt-metal/native
+
+serve:
+  port: 8000
+  hardware: p100a
+  mesh_device: P100
+  env:
+    ARCH_NAME: blackhole
+    OMP_NUM_THREADS: "8"
+    OMP_PROC_BIND: spread
+    OMP_PLACES: cores
+
+serve_profiles:
+  - name: coder
+    description: Qwen3.8-Flash-Next Coder (256 experts, IQ1_M GGUF), 8 GB of GPTQ-BFP4 experts on the card. Default.
+    args: [--profile, coder]
+  - name: coder-fast
+    description: The Coder with 16 GB of experts on the card - ~20 % faster decode, ~50 % faster prompts, KL 0.0046.
+    args: [--profile, coder-fast]
+  - name: full
+    description: The base model (512 experts, IQ3_XXS GGUF); downloads 75.8 GB more on first start. Better for Korean / general chat.
+    args: [--profile, full]
+default_profile: coder
+
+verify:
+  # import EVERY module (several are imported lazily at start-up) and load the native library in both CPU variants
+  - "import tt_qwen38.server, tt_qwen38.api, tt_qwen38.chat, tt_qwen38.sessions, tt_qwen38.prefix, tt_qwen38.kkv, tt_qwen38.kgdn, tt_qwen38.khc, tt_qwen38.kmoe"
+  - "import tt_qwen38.model, tt_qwen38.traced, tt_qwen38.verify, tt_qwen38.spec, tt_qwen38.weights, tt_qwen38.experts, tt_qwen38.hostexp, tt_qwen38.sources"
+  - "import tt_qwen38.ref.gguf_weights, tt_qwen38.ref.tokenizer, tt_qwen38.ref.model, gguf; assert gguf.GGMLQuantizationType.Q2_0 == 42"
+  - "import models.experimental.gated_attention_gated_deltanet.tt.ttnn_delta_rule_ops"
+  - "import ctypes, tt_qwen38_native as n; [ctypes.CDLL(str(n.LIB / v / 'libhostexp.so')) for v in ('v3', 'v4')]"
+  - "import tt_qwen38.sources as s; assert len(s.LOTTO_SHA_FILE.read_text().split()) == 192 and s.MTP_SHA256"
+  # data files tt-model's packaging could drop (it ignores *.bin): Strata's expert profiles, read at first start
+  - "import pathlib, tt_qwen38.experts as e; from tt_qwen38.expert_profile import read; assert all(len(read(str(p))['ranked']) > 1000 for p in pathlib.Path(e.__file__).parent.joinpath('data').glob('expert-profile*.prof'))"
+  - "import jinja2, huggingface_hub, regex, yaml"
+
+card:
+  description: >
+    Qwen3.8-Flash-Next (GSQ-RCO GGUF by ISTA-DASLab; the Coder variant by default) on one Tenstorrent Blackhole p100a
+    plus the host CPU: dense layers, attention and the hottest experts on the card; routing and the remaining experts
+    on the CPU, the experts read from the memory-mapped GGUF. OpenAI- and Anthropic-compatible API (chat completions, responses, messages,
+    tool calls, streaming). Weights are downloaded from their publishers at pinned revisions (Qwen Community License
+    1.0) and never redistributed.
+  architecture: Qwen3.8-Flash-Next MoE (gated delta net + sparse attention, hyper-connections, 256 / 512 experts top-10, MTP); card + CPU
+  status: community port; measured on one p100a with a Ryzen 9 7900 host (64 GB class)
+  quickstart: |
+    ### Requests
+
+    The server is OpenAI- and Anthropic-compatible; the model id is `qwen3.8-flash-next-p100a-<profile>`.
+
+    ```bash
+    curl -s localhost:20000/v1/chat/completions -H 'Content-Type: application/json' \
+      -d '{"model":"qwen3.8-flash-next-p100a-coder","messages":[{"role":"user","content":"Hello!"}],"max_tokens":200}'
+    ```
+
+    The first start downloads ~96 GB (Coder GGUF 58.4 GB, Lottolabs pool 32 GB, MTP tensors 5.2 GB) and builds ~14 GB
+    of card caches on the host; later starts load them.
+  performance: |
+    Measured 2026-11-12 on one p100a with a Ryzen 9 7900 host (8 CPU threads pinned), through the HTTP server, greedy,
+    thinking off, MTP speculative decoding with 3 drafts, medians of 3 runs.
+
+    | profile | decode tok/s (chat / code / doc) | plain decode (no MTP) | prompt reading |
+    |---|---|---|---|
+    | `coder` (8 GB on the card, default) | 10.4 / 14.5 / 13.7 | 8.3 / 8.3 / 8.4 | 31-35 tok/s |
+    | `coder-fast` (16 GB on the card) | 12.4 / 16.4 / 16.6 | 8.8 / 8.9 / 9.0 | 44-58 tok/s |
+    | `full` (base model, 8 GB on the card) | 10.9 / 14.1 / 12.2 | 8.0 / 8.2 / 8.0 | 31-34 tok/s |
+
+    Quality against a float32 CPU run of the same GGUF weights (517 teacher-forced positions): KL 0.0029 / top-1
+    0.983 (`coder`, `full`), 0.0046 / 0.979 (`coder-fast`); greedy 16/16 tokens identical on two prompts.
+    GSM8K, first 50, max 2,048 tokens: 50/50 for all three profiles (1,466 / 1,175 / 1,541 s).
+    Long context (32k, sparse attention past 2,051 tokens): needles at 8k and 30k tokens found; at 30k, prompt reading
+    29.2 tok/s and decode 9.65 tok/s. Claude Code on `full` with `--thinking off`: a 7-turn task (add a function, write
+    and run tests) in 5 min 21 s; later turns start in 8-34 s thanks to the prefix cache.
+  limitations: |
+    - Needs a 64 GB host: the CPU experts are read from the memory-mapped GGUF (37.8 GB if all get touched for
+      `full`) and must stay in the page cache; with less RAM decode falls to disk speed.
+    - Decode is ~10-17 tok/s and prompts read at ~30-60 tok/s: the CPU experts, not the card, set the pace.
+    - First start: ~96 GB of downloads (`coder`; `full` adds 75.8 GB) and the card caches are built on the host
+      (dense weights, the resident expert set, the MTP layer); inside the container the downloads show no progress in
+      `tt-model serve` (`tt-model logs -f` shows them).
+    - The Coder model is weak in Korean (it drifts into English or loops); use the `full` profile for Korean or
+      general chat.
+    - Context is 32k tokens; one card only; requests beyond `--max-concurrent` wait (time slicing, no batched decode).
+    - `tt-model serve` refuses while any other container holds `/dev/tenstorrent` (tt-model's busy-chip check).
+    - Qwen Community License 1.0: a Model-as-a-Service or AI-Work-Assistant business needs a separate license from
+      Qwen for commercial use (see NOTICE).

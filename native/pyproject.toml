@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tt-qwen38-native"
+version = "0.1.0"
+description = "Host CPU experts for tt-qwen38: ggml's CPU kernels (llama.cpp aa75ff3) behind a small C API, x86-64-v3 and v4 builds"
+license = {text = "Apache-2.0 AND MIT"}
+requires-python = ">=3.10"
+
+[tool.setuptools]
+packages = ["tt_qwen38_native"]
+
+[tool.setuptools.package-data]
+tt_qwen38_native = ["lib/*/*"]
